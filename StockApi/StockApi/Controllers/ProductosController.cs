@@ -148,11 +148,130 @@ namespace StockApi.Controllers
 
             return Ok(movimientos);
         }
-    }
 
-    public class MovimientoDto
+
+        // GET: api/productos/exportar
+        [HttpGet("exportar")]
+        public IActionResult ExportarExcel()
+        {
+            var productos = _context.Productos.ToList();
+
+            using var workbook = new ClosedXML.Excel.XLWorkbook();
+            var hoja = workbook.Worksheets.Add("Productos");
+
+            // Encabezados
+            hoja.Cell(1, 1).Value = "Id";
+            hoja.Cell(1, 2).Value = "Nombre";
+            hoja.Cell(1, 3).Value = "Descripcion";
+            hoja.Cell(1, 4).Value = "Precio";
+            hoja.Cell(1, 5).Value = "StockActual";
+            hoja.Cell(1, 6).Value = "StockMinimo";
+            hoja.Cell(1, 7).Value = "CategoriaId";
+            hoja.Row(1).Style.Font.Bold = true;
+
+            // Filas de datos
+            int fila = 2;
+            foreach (var p in productos)
+            {
+                hoja.Cell(fila, 1).Value = p.Id;
+                hoja.Cell(fila, 2).Value = p.Nombre;
+                hoja.Cell(fila, 3).Value = p.Descripcion;
+                hoja.Cell(fila, 4).Value = p.Precio;
+                hoja.Cell(fila, 5).Value = p.StockActual;
+                hoja.Cell(fila, 6).Value = p.StockMinimo;
+                hoja.Cell(fila, 7).Value = p.CategoriaId;
+                fila++;
+            }
+
+            hoja.Columns().AdjustToContents();
+
+            using var stream = new MemoryStream();
+            workbook.SaveAs(stream);
+            var contenido = stream.ToArray();
+
+            return File(
+                contenido,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "productos.xlsx"
+            );
+        }
+    
+
+    // POST: api/productos/importar
+[HttpPost("importar")]
+        public async Task<IActionResult> ImportarExcel(IFormFile archivo)
+        {
+            if (archivo == null || archivo.Length == 0)
+                return BadRequest("No se envió ningún archivo.");
+
+            var productosCreados = new List<Producto>();
+            var errores = new List<string>();
+
+            using var stream = new MemoryStream();
+            await archivo.CopyToAsync(stream);
+
+            using var workbook = new ClosedXML.Excel.XLWorkbook(stream);
+            var hoja = workbook.Worksheet(1);
+
+            var filas = hoja.RowsUsed().Skip(1); // Saltea la fila de encabezados
+
+            foreach (var fila in filas)
+            {
+                try
+                {
+                    var nombre = fila.Cell(2).GetString();
+                    var descripcion = fila.Cell(3).GetString();
+                    var precio = fila.Cell(4).GetValue<decimal>();
+                    var stockActual = fila.Cell(5).GetValue<int>();
+                    var stockMinimo = fila.Cell(6).GetValue<int>();
+                    var categoriaId = fila.Cell(7).GetValue<int>();
+
+                    if (string.IsNullOrWhiteSpace(nombre))
+                    {
+                        errores.Add($"Fila {fila.RowNumber()}: el nombre está vacío, se omitió.");
+                        continue;
+                    }
+
+                    var categoriaExiste = _context.Categorias.Any(c => c.Id == categoriaId);
+                    if (!categoriaExiste)
+                    {
+                        errores.Add($"Fila {fila.RowNumber()}: la categoría {categoriaId} no existe, se omitió.");
+                        continue;
+                    }
+
+                    var producto = new Producto
+                    {
+                        Nombre = nombre,
+                        Descripcion = descripcion,
+                        Precio = precio,
+                        StockActual = stockActual,
+                        StockMinimo = stockMinimo,
+                        CategoriaId = categoriaId
+                    };
+
+                    _context.Productos.Add(producto);
+                    productosCreados.Add(producto);
+                }
+                catch (Exception ex)
+                {
+                    errores.Add($"Fila {fila.RowNumber()}: error al procesar ({ex.Message}).");
+                }
+            }
+
+            _context.SaveChanges();
+
+            return Ok(new
+            {
+                creados = productosCreados.Count,
+                errores
+            });
+        }
+    }
+}
+
+
+public class MovimientoDto
     {
         public int Cantidad { get; set; }
         public string? Motivo { get; set; }
     }
-}
